@@ -1,16 +1,8 @@
-# python-markdown2 Makefile
+# myrkdown Makefile
 SHELL=/bin/bash
 
 .PHONY: all
 all:
-
-.PHONY: test
-test:
-	cd test && python testall.py
-
-.PHONY: testone
-testone:
-	cd test && python test.py -- -knownfailure
 
 .PHONY: pygments
 pygments:
@@ -30,11 +22,11 @@ clean:
 
 .PHONY: versioncheck
 versioncheck:
-	[[ `grep '^__version_info__' lib/markdown2.py | cut -d'(' -f2 | cut -d')' -f1 | sed 's/, /./g'` \
+	[[ `grep '^__version_info__' lib/myrkdown.py | cut -d'(' -f2 | cut -d')' -f1 | sed 's/, /./g'` \
 	    == `grep '^## ' CHANGES.md | head -1 | awk '{print $$3}'` ]]
 	@echo Version check ok.
 
 .PHONY: cutarelease
 cutarelease: versioncheck
-	./tools/cutarelease.py -f lib/markdown2.py
+	./tools/cutarelease.py -f lib/myrkdown.py
 

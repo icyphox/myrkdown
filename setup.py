@@ -36,16 +36,16 @@ Topic :: Text Processing :: Markup :: HTML
 script = (sys.platform == "win32" and "lib\\markdown2.py" or "bin/markdown2")
 
 setup(
-    name="markdown2",
+    name="myrkdown",
     version=markdown2.__version__,
-    maintainer="Trent Mick",
-    maintainer_email="trentm@gmail.com",
-    author="Trent Mick",
-    author_email="trentm@gmail.com",
-    url="https://github.com/trentm/python-markdown2",
+    maintainer="Anirudh Oppiliappan",
+    maintainer_email="x@icyphox.sh",
+    author="Anirudh Oppiliappan",
+    author_email="x@icyphox.sh",
+    url="https://github.com/icyphox/myrkdown",
     license="MIT",
     platforms=["any"],
-    py_modules=["markdown2"],
+    py_modules=["myrkdown"],
     package_dir={"": "lib"},
     scripts=[script],
     description="A fast and complete Python implementation of Markdown",
