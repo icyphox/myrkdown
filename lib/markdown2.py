@@ -203,8 +203,6 @@ class Markdown(object):
     html_removed_text = "{(#HTML#)}"  # placeholder removed text that does not trigger bold
     html_removed_text_compat = "[HTML_REMOVED]"  # for compat with markdown.py
 
-    _toc = None
-
     # Used to track when we're inside an ordered or unordered list
     # (see _ProcessListItems() for details):
     list_level = 0
@@ -241,14 +239,6 @@ class Markdown(object):
             self.extras.update(extras)
         assert isinstance(self.extras, dict)
 
-        if "toc" in self.extras:
-            if "header-ids" not in self.extras:
-                self.extras["header-ids"] = None   # "toc" implies "header-ids"
-
-            if self.extras["toc"] is None:
-                self._toc_depth = 6
-            else:
-                self._toc_depth = self.extras["toc"].get("depth", 6)
         self._instance_extras = self.extras.copy()
 
         self.link_patterns = link_patterns
@@ -277,7 +267,6 @@ class Markdown(object):
             self._count_from_header_id = defaultdict(int)
         if "metadata" in self.extras:
             self.metadata = {}
-        self._toc = None
 
     # Per <https://developer.mozilla.org/en-US/docs/HTML/Element/a> "rel"
     # should only be used in <a> tags with an "href" attribute.
@@ -315,22 +304,6 @@ class Markdown(object):
             # TODO: perhaps shouldn't presume UTF-8 for string input?
             text = unicode(text, 'utf-8')
 
-        if self.use_file_vars:
-            # Look for emacs-style file variable hints.
-            emacs_vars = self._get_emacs_vars(text)
-            if "markdown-extras" in emacs_vars:
-                splitter = re.compile("[ ,]+")
-                for e in splitter.split(emacs_vars["markdown-extras"]):
-                    if '=' in e:
-                        ename, earg = e.split('=', 1)
-                        try:
-                            earg = int(earg)
-                        except ValueError:
-                            pass
-                    else:
-                        ename, earg = e, None
-                    self.extras[ename] = earg
-
         # Standardize line endings:
         text = text.replace("\r\n", "\n")
         text = text.replace("\r", "\n")
@@ -365,11 +338,6 @@ class Markdown(object):
         if "fenced-code-blocks" in self.extras and self.safe_mode:
             text = self._do_fenced_code_blocks(text)
 
-        # Because numbering references aren't links (yet?) then we can do everything associated with counters
-        # before we get started
-        if "numbering" in self.extras:
-            text = self._do_numbering(text)
-
         # Strip link definitions, store in hashes.
         if "footnotes" in self.extras:
             # Must do footnotes first because an unlucky footnote defn
@@ -398,20 +366,10 @@ class Markdown(object):
         if "target-blank-links" in self.extras:
             text = self._a_blank.sub(r'<\1 target="_blank"\2', text)
 
-        if "toc" in self.extras and self._toc:
-            self._toc_html = calculate_toc_html(self._toc)
-
-            # Prepend toc html to output
-            if self.cli:
-                text = '{}\n{}'.format(self._toc_html, text)
-
         text += "\n"
 
         # Attach attrs to output
         rv = UnicodeWithAttrs(text)
-
-        if "toc" in self.extras and self._toc:
-            rv.toc_html = self._toc_html
 
         if "metadata" in self.extras:
             rv.metadata = self.metadata
@@ -478,123 +436,6 @@ class Markdown(object):
             self.metadata[k.strip()] = v.strip()
 
         return tail
-
-    _emacs_oneliner_vars_pat = re.compile(r"-\*-\s*([^\r\n]*?)\s*-\*-", re.UNICODE)
-    # This regular expression is intended to match blocks like this:
-    #    PREFIX Local Variables: SUFFIX
-    #    PREFIX mode: Tcl SUFFIX
-    #    PREFIX End: SUFFIX
-    # Some notes:
-    # - "[ \t]" is used instead of "\s" to specifically exclude newlines
-    # - "(\r\n|\n|\r)" is used instead of "$" because the sre engine does
-    #   not like anything other than Unix-style line terminators.
-    _emacs_local_vars_pat = re.compile(r"""^
-        (?P<prefix>(?:[^\r\n|\n|\r])*?)
-        [\ \t]*Local\ Variables:[\ \t]*
-        (?P<suffix>.*?)(?:\r\n|\n|\r)
-        (?P<content>.*?\1End:)
-        """, re.IGNORECASE | re.MULTILINE | re.DOTALL | re.VERBOSE)
-
-    def _get_emacs_vars(self, text):
-        """Return a dictionary of emacs-style local variables.
-
-        Parsing is done loosely according to this spec (and according to
-        some in-practice deviations from this):
-        http://www.gnu.org/software/emacs/manual/html_node/emacs/Specifying-File-Variables.html#Specifying-File-Variables
-        """
-        emacs_vars = {}
-        SIZE = pow(2, 13)  # 8kB
-
-        # Search near the start for a '-*-'-style one-liner of variables.
-        head = text[:SIZE]
-        if "-*-" in head:
-            match = self._emacs_oneliner_vars_pat.search(head)
-            if match:
-                emacs_vars_str = match.group(1)
-                assert '\n' not in emacs_vars_str
-                emacs_var_strs = [s.strip() for s in emacs_vars_str.split(';')
-                                  if s.strip()]
-                if len(emacs_var_strs) == 1 and ':' not in emacs_var_strs[0]:
-                    # While not in the spec, this form is allowed by emacs:
-                    #   -*- Tcl -*-
-                    # where the implied "variable" is "mode". This form
-                    # is only allowed if there are no other variables.
-                    emacs_vars["mode"] = emacs_var_strs[0].strip()
-                else:
-                    for emacs_var_str in emacs_var_strs:
-                        try:
-                            variable, value = emacs_var_str.strip().split(':', 1)
-                        except ValueError:
-                            log.debug("emacs variables error: malformed -*- "
-                                      "line: %r", emacs_var_str)
-                            continue
-                        # Lowercase the variable name because Emacs allows "Mode"
-                        # or "mode" or "MoDe", etc.
-                        emacs_vars[variable.lower()] = value.strip()
-
-        tail = text[-SIZE:]
-        if "Local Variables" in tail:
-            match = self._emacs_local_vars_pat.search(tail)
-            if match:
-                prefix = match.group("prefix")
-                suffix = match.group("suffix")
-                lines = match.group("content").splitlines(0)
-                # print "prefix=%r, suffix=%r, content=%r, lines: %s"\
-                #      % (prefix, suffix, match.group("content"), lines)
-
-                # Validate the Local Variables block: proper prefix and suffix
-                # usage.
-                for i, line in enumerate(lines):
-                    if not line.startswith(prefix):
-                        log.debug("emacs variables error: line '%s' "
-                                  "does not use proper prefix '%s'"
-                                  % (line, prefix))
-                        return {}
-                    # Don't validate suffix on last line. Emacs doesn't care,
-                    # neither should we.
-                    if i != len(lines)-1 and not line.endswith(suffix):
-                        log.debug("emacs variables error: line '%s' "
-                                  "does not use proper suffix '%s'"
-                                  % (line, suffix))
-                        return {}
-
-                # Parse out one emacs var per line.
-                continued_for = None
-                for line in lines[:-1]:  # no var on the last line ("PREFIX End:")
-                    if prefix: line = line[len(prefix):]  # strip prefix
-                    if suffix: line = line[:-len(suffix)]  # strip suffix
-                    line = line.strip()
-                    if continued_for:
-                        variable = continued_for
-                        if line.endswith('\\'):
-                            line = line[:-1].rstrip()
-                        else:
-                            continued_for = None
-                        emacs_vars[variable] += ' ' + line
-                    else:
-                        try:
-                            variable, value = line.split(':', 1)
-                        except ValueError:
-                            log.debug("local variables error: missing colon "
-                                      "in local variables entry: '%s'" % line)
-                            continue
-                        # Do NOT lowercase the variable name, because Emacs only
-                        # allows "mode" (and not "Mode", "MoDe", etc.) in this block.
-                        value = value.strip()
-                        if value.endswith('\\'):
-                            value = value[:-1].rstrip()
-                            continued_for = variable
-                        else:
-                            continued_for = None
-                        emacs_vars[variable] = value
-
-        # Unquote values.
-        for var, val in list(emacs_vars.items()):
-            if len(val) > 1 and (val.startswith('"') and val.endswith('"')
-               or val.startswith('"') and val.endswith('"')):
-                emacs_vars[var] = val[1:-1]
-
-        return emacs_vars
 
     def _detab_line(self, line):
         r"""Recusively convert tabs to spaces in a single line.
@@ -833,64 +674,6 @@ class Markdown(object):
             self.titles[key] = title
         return ""
 
-    def _do_numbering(self, text):
-        ''' We handle the special extension for generic numbering for
-            tables, figures etc.
-        '''
-        # First pass to define all the references
-        self.regex_defns = re.compile(r'''
-            \[\#(\w+)\s* # the counter.  Open square plus hash plus a word \1
-            ([^@]*)\s*   # Some optional characters, that aren't an @. \2
-            @(\w+)       # the id.  Should this be normed? \3
-            ([^\]]*)\]   # The rest of the text up to the terminating ] \4
-            ''', re.VERBOSE)
-        self.regex_subs = re.compile(r"\[@(\w+)\s*\]")  # [@ref_id]
-        counters = {}
-        references = {}
-        replacements = []
-        definition_html = '<figcaption class="{}" id="counter-ref-{}">{}{}{}</figcaption>'
-        reference_html = '<a class="{}" href="#counter-ref-{}">{}</a>'
-        for match in self.regex_defns.finditer(text):
-            # We must have four match groups otherwise this isn't a numbering reference
-            if len(match.groups()) != 4:
-                continue
-            counter = match.group(1)
-            text_before = match.group(2)
-            ref_id = match.group(3)
-            text_after = match.group(4)
-            number = counters.get(counter, 1)
-            references[ref_id] = (number, counter)
-            replacements.append((match.start(0),
-                                 definition_html.format(counter,
-                                                        ref_id,
-                                                        text_before,
-                                                        number,
-                                                        text_after),
-                                 match.end(0)))
-            counters[counter] = number + 1
-        for repl in reversed(replacements):
-            text = text[:repl[0]] + repl[1] + text[repl[2]:]
-
-        # Second pass to replace the references with the right
-        # value of the counter
-        # Fwiw, it's vaguely annoying to have to turn the iterator into
-        # a list and then reverse it but I can't think of a better thing to do.
-        for match in reversed(list(self.regex_subs.finditer(text))):
-            number, counter = references.get(match.group(1), (None, None))
-            if number is not None:
-                repl = reference_html.format(counter,
-                                             match.group(1),
-                                             number)
-            else:
-                repl = reference_html.format(match.group(1),
-                                             'countererror',
-                                             '?' + match.group(1) + '?')
-            if "smarty-pants" in self.extras:
-                repl = repl.replace('"', self._escape_table['"'])
-
-            text = text[:match.start()] + repl + text[match.end():]
-        return text
-
     def _extract_footnote_def_sub(self, match):
         id, text = match.groups()
         text = _dedent(text, skip_first_line=not text.startswith('\n')).strip()
@@ -956,8 +739,6 @@ class Markdown(object):
 
         if "pyshell" in self.extras:
             text = self._prepare_pyshell_blocks(text)
-        if "wiki-tables" in self.extras:
-            text = self._do_wiki_tables(text)
         if "tables" in self.extras:
             text = self._do_tables(text)
 
@@ -1075,59 +856,6 @@ class Markdown(object):
             ''' % (less_than_tab, less_than_tab, less_than_tab), re.M | re.X)
         return table_re.sub(self._table_sub, text)
 
-    def _wiki_table_sub(self, match):
-        ttext = match.group(0).strip()
-        # print('wiki table: %r' % match.group(0))
-        rows = []
-        for line in ttext.splitlines(0):
-            line = line.strip()[2:-2].strip()
-            row = [c.strip() for c in re.split(r'(?<!\\)\|\|', line)]
-            rows.append(row)
-        # from pprint import pprint
-        # pprint(rows)
-        hlines = []
-
-        def add_hline(line, indents=0):
-            hlines.append((self.tab * indents) + line)
-
-        def format_cell(text):
-            return self._run_span_gamut(re.sub(r"^\s*~", "", cell).strip(" "))
-
-        add_hline('<table%s>' % self._html_class_str_from_tag('table'))
-        # Check if first cell of first row is a header cell. If so, assume the whole row is a header row.
-        if rows and rows[0] and re.match(r"^\s*~", rows[0][0]):
-            add_hline('<thead>', 1)
-            add_hline('<tr>', 2)
-            for cell in rows[0]:
-                add_hline("<th>{}</th>".format(format_cell(cell)), 3)
-            add_hline('</tr>', 2)
-            add_hline('</thead>', 1)
-            # Only one header row allowed.
-            rows = rows[1:]
-        # If no more rows, don't create a tbody.
-        if rows:
-            add_hline('<tbody>', 1)
-            for row in rows:
-                add_hline('<tr>', 2)
-                for cell in row:
-                    add_hline('<td>{}</td>'.format(format_cell(cell)), 3)
-                add_hline('</tr>', 2)
-            add_hline('</tbody>', 1)
-        add_hline('</table>')
-        return '\n'.join(hlines) + '\n'
-
-    def _do_wiki_tables(self, text):
-        # Optimization.
-        if "||" not in text:
-            return text
-
-        less_than_tab = self.tab_width - 1
-        wiki_table_re = re.compile(r'''
-            (?:(?<=\n\n)|\A\n?)            # leading blank line
-            ^([ ]{0,%d})\|\|.+?\|\|[ ]*\n  # first line
-            (^\1\|\|.+?\|\|\n)*        # any number of subsequent lines
-            ''' % less_than_tab, re.M | re.X)
-        return wiki_table_re.sub(self._wiki_table_sub, text)
 
     def _run_span_gamut(self, text):
         # These are all the transformations that occur *within* block-level
@@ -1541,13 +1269,6 @@ class Markdown(object):
 
         return header_id
 
-    def _toc_add_entry(self, level, id, name):
-        if level > self._toc_depth:
-            return
-        if self._toc is None:
-            self._toc = []
-        self._toc.append((level, id, self._unescape_special_chars(name)))
-
     _h_re_base = r'''
         (^(.+)[ \t]*\n(=+|-+)[ \t]*\n+)
         |
@@ -1586,8 +1307,6 @@ class Markdown(object):
             if header_id:
                 header_id_attr = ' id="%s"' % header_id
         html = self._run_span_gamut(header_group)
-        if "toc" in self.extras and header_id:
-            self._toc_add_entry(n, header_id, html)
         return "<h%d%s>%s</h%d>\n\n" % (n, header_id_attr, html, n)
 
     def _do_headers(self, text):
@@ -1797,13 +1516,6 @@ class Markdown(object):
             codeblock = codeblock.lstrip('\n')  # trim leading newlines
             codeblock = codeblock.rstrip()      # trim trailing whitespace
 
-            # Note: "code-color" extra is DEPRECATED.
-            if "code-color" in self.extras and codeblock.startswith(":::"):
-                lexer_name, rest = codeblock.split('\n', 1)
-                lexer_name = lexer_name[3:].strip()
-                codeblock = rest.lstrip("\n")   # Remove lexer declaration line.
-                formatter_opts = self.extras['code-color'] or {}
-
         # Use pygments only if not using the highlightjs-lang extra
         if lexer_name and "highlightjs-lang" not in self.extras:
             def unhash_code(codeblock):
@@ -2007,8 +1719,8 @@ class Markdown(object):
             text = self._opening_double_quote_re.sub("&#8220;", text)
             text = self._closing_double_quote_re.sub("&#8221;", text)
 
-        text = text.replace("---", "&#8212;")
-        text = text.replace("--", "&#8211;")
+        text = text.replace(" -- ", "&#8212;")
+        text = text.replace("-", "&#8211;")
         text = text.replace("...", "&#8230;")
         text = text.replace(" . . . ", "&#8230;")
         text = text.replace(". . .", "&#8230;")
@@ -2293,45 +2005,10 @@ class MarkdownWithExtras(Markdown):
     - link-patterns (because you need to specify some actual
       link-patterns anyway)
     """
-    extras = ["footnotes", "code-color"]
+    extras = ["footnotes"]
 
 
 # ---- internal support functions
-
-
-def calculate_toc_html(toc):
-    """Return the HTML for the current TOC.
-
-    This expects the `_toc` attribute to have been set on this instance.
-    """
-    if toc is None:
-        return None
-
-    def indent():
-        return '  ' * (len(h_stack) - 1)
-    lines = []
-    h_stack = [0]   # stack of header-level numbers
-    for level, id, name in toc:
-        if level > h_stack[-1]:
-            lines.append("%s<ul>" % indent())
-            h_stack.append(level)
-        elif level == h_stack[-1]:
-            lines[-1] += "</li>"
-        else:
-            while level < h_stack[-1]:
-                h_stack.pop()
-                if not lines[-1].endswith("</li>"):
-                    lines[-1] += "</li>"
-                lines.append("%s</ul></li>" % indent())
-        lines.append('%s<li><a href="#%s">%s</a>' % (
-            indent(), id, name))
-    while len(h_stack) > 1:
-        h_stack.pop()
-        if not lines[-1].endswith("</li>"):
-            lines[-1] += "</li>"
-        lines.append("%s</ul>" % indent())
-    return '\n'.join(lines) + '\n'
-
 
 class UnicodeWithAttrs(unicode):
     """A subclass of unicode used for the return value of conversion to
@@ -2339,7 +2016,6 @@ class UnicodeWithAttrs(unicode):
     the "toc" extra is used.
     """
     metadata = None
-    toc_html = None
 
 ## {{{ http://code.activestate.com/recipes/577257/ (r1)
 _slugify_strip_re = re.compile(r'[^\w\s-]')
@@ -2635,10 +2311,6 @@ def main(argv=None):
     parser.add_option("-x", "--extras", action="append",
                       help="Turn on specific extra features (not part of "
                            "the core Markdown spec). See above.")
-    parser.add_option("--use-file-vars",
-                      help="Look for and use Emacs-style 'markdown-extras' "
-                           "file var to turn on extras. See "
-                           "<https://github.com/trentm/python-markdown2/wiki/Extras>")
     parser.add_option("--link-patterns-file",
                       help="path to a link pattern file")
     parser.add_option("--self-test", action="store_true",
@@ -2725,9 +2397,6 @@ def main(argv=None):
         else:
             sys.stdout.write(html.encode(
                 sys.stdout.encoding or "utf-8", 'xmlcharrefreplace'))
-        if extras and "toc" in extras:
-            log.debug("toc_html: " +
-                str(html.toc_html.encode(sys.stdout.encoding or "utf-8", 'xmlcharrefreplace')))
         if opts.compare:
             test_dir = join(dirname(dirname(abspath(__file__))), "test")
             if exists(join(test_dir, "test_markdown2.py")):
