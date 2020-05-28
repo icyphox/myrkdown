@@ -8,7 +8,7 @@ from setuptools import setup
 _top_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_top_dir, "lib"))
 try:
-    import markdown2
+    import myrkdown 
 finally:
     del sys.path[0]
 
@@ -33,11 +33,11 @@ Topic :: Text Processing :: Filters
 Topic :: Text Processing :: Markup :: HTML
 """
 
-script = (sys.platform == "win32" and "lib\\markdown2.py" or "bin/markdown2")
+script = (sys.platform == "win32" and "lib\\myrkdown.py" or "bin/myrkdown")
 
 setup(
     name="myrkdown",
-    version=markdown2.__version__,
+    version=myrkdown.__version__,
     maintainer="Anirudh Oppiliappan",
     maintainer_email="x@icyphox.sh",
     author="Anirudh Oppiliappan",
