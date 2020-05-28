@@ -1,3 +1,13 @@
+# python-markdown2
+
+This is my fork of markdown2 by @trentm. It currently features the
+following:
+
+- The `smarty-pants` extension has been modified to use ` -- ` for
+  em-dash and `-`
+
+---
+
 Markdown is a light text markup format and a processor to convert that to HTML.
 The originator describes it as follows:
 
